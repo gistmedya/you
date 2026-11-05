@@ -1,0 +1,64 @@
+name: fixtv
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Çift yayın çalışmasını ve çakışmayı önleyen kural
+concurrency:
+  group: fixtv-stream
+  cancel-in-progress: true
+
+jobs:
+  yayin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+    - name: 📥 Depoyu klonla
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Python kurulumu
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        
+    - name: 📦 FFmpeg ve Kurulumlar
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
+        pip install requests
+
+    - name: 📥 Kayıtlı State Dosyasını İndir
+      continue-on-error: true
+      run: |
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
+
+    - name: 🚀 Yayını başlat
+      env:
+        STATE_FILE_NAME: "state_fixtv.json"
+      run: python -u maxdeneme.py
+
+    - name: 💾 Son Durumu Release Üzerinde Güncelle
+      if: always()
+      uses: softprops/action-gh-release@v1
+      with:
+        files: state_fixtv.json
+        tag_name: state-data
+        name: "Yayın Kaldığı Yer (State)"
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🔁 Süre Doldu veya İptal Edildi, Yeni Run'ı Tetikle
+      if: always()
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        curl -X POST \
+          -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/maxdeneme.yml/dispatches" \
+          -d '{"ref":"main"}'
