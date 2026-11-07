@@ -316,7 +316,7 @@ def start_m3u_stream():
             last_seconds = 0
 
         print("=" * 60)
-        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
+        print("📺 Maxanimasyon Canlı Aktarım Yayını (4K 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -359,8 +359,8 @@ def start_m3u_stream():
 
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=23:"
-            f"x=50:y=main_h-th-50"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=46:"
+            f"x=100:y=main_h-th-100"
         )
 
         ticker_drawtext = (
@@ -373,19 +373,19 @@ def start_m3u_stream():
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:78,format=rgba,'
+                '[0:v]scale=3840:2160:force_original_aspect_ratio=decrease,'
+                'pad=3840:2160:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                f'[{logo1_input_index}:v]scale=-2:156,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-60:55[tmp1];'
+                '[main][logo1]overlay=main_w-overlay_w-120:110[tmp1];'
                 f'[tmp1]{title_drawtext}[tmp2];'
                 f'[tmp2]{ticker_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                '[0:v]scale=3840:2160:force_original_aspect_ratio=decrease,'
+                'pad=3840:2160:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[main]{title_drawtext}[tmp1];'
                 f'[tmp1]{ticker_drawtext}[v]'
             )
@@ -417,7 +417,7 @@ def start_m3u_stream():
             'pipe:1'
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 4K 25fps @ 2500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
