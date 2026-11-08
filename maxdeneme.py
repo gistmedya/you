@@ -160,7 +160,6 @@ def get_m3u_playlist(m3u_url):
         response = requests.get(m3u_url, headers=headers, timeout=15)
         if response.status_code == 200:
             content = response.text.strip()
-            # UZANTI YERİNE İÇERİK KONTROLÜ (Content Sniffing)
             if "#EXTM3U" in content or "#EXTINF" in content:
                 lines = content.splitlines()
                 playlist = []
@@ -179,7 +178,6 @@ def get_m3u_playlist(m3u_url):
                 if playlist:
                     return playlist
             
-            # Playlist değilse doğrudan tekli akış olarak ele al
             return [{"url": m3u_url, "title": os.path.basename(m3u_url.split('?')[0])}]
     except Exception as e:
         print(f"⚠️ İçerik analiz ve çekme hatası: {e}")
@@ -240,6 +238,7 @@ def get_stream_duration(url, headers_arg):
         cmd = [
             'ffprobe', '-v', 'error',
             '-headers', headers_arg,
+            '-allowed_extensions', 'ALL',  # FFprobe için de uzantı kısıtlamasını kaldır
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
             url
@@ -330,6 +329,7 @@ def start_m3u_stream():
 
         input_options = [
             '-headers', headers_arg,
+            '-allowed_extensions', 'ALL',  # <- JPG gibi farklı segment uzantılarına izin verir
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-analyzeduration', '10000000',
