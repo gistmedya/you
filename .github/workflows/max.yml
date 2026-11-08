@@ -1,4 +1,4 @@
-Name: fixtv
+name: fixtv
 on:
   push:
     branches: [ main ]
