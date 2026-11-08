@@ -20,7 +20,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/deneme.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/playtv.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "yerli.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -159,31 +159,24 @@ def get_m3u_playlist(m3u_url):
         headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
         response = requests.get(m3u_url, headers=headers, timeout=15)
         if response.status_code == 200:
-            content = response.text.strip()
-            # UZANTI YERİNE İÇERİK KONTROLÜ (Content Sniffing)
-            if "#EXTM3U" in content or "#EXTINF" in content:
-                lines = content.splitlines()
-                playlist = []
-                pending_title = None
-                for raw_line in lines:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    if line.startswith('#EXTINF'):
-                        match = re.search(r',(.+)$', line)
-                        pending_title = match.group(1).strip() if match else None
-                    elif not line.startswith('#') and line.startswith('http'):
-                        title = pending_title or os.path.basename(line.split('?')[0])
-                        playlist.append({"url": line, "title": title})
-                        pending_title = None
-                if playlist:
-                    return playlist
-            
-            # Playlist değilse doğrudan tekli akış olarak ele al
-            return [{"url": m3u_url, "title": os.path.basename(m3u_url.split('?')[0])}]
+            lines = response.text.splitlines()
+            playlist = []
+            pending_title = None
+            for raw_line in lines:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith('#EXTINF'):
+                    match = re.search(r',(.+)$', line)
+                    pending_title = match.group(1).strip() if match else None
+                elif not line.startswith('#') and line.startswith('http'):
+                    title = pending_title or os.path.basename(line.split('?')[0])
+                    playlist.append({"url": line, "title": title})
+                    pending_title = None
+            return playlist
     except Exception as e:
-        print(f"⚠️ İçerik analiz ve çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url.split('?')[0])}]
+        print(f"⚠️ M3U çekme hatası: {e}")
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
 
 
 def download_logo():
@@ -255,7 +248,7 @@ def get_stream_duration(url, headers_arg):
 
 
 def start_m3u_stream():
-    print(f"🔧 Kullanılan Kaynak: {M3U_URL}")
+    print(f"🔧 Kullanılan M3U   : {M3U_URL}")
     print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
@@ -304,7 +297,7 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        print(f"🔍 Kaynak video içeriği ffprobe ile doğrulanıyor...")
+        print(f"🔍 Kaynak video süresi ffprobe ile kontrol ediliyor...")
         media_duration = get_stream_duration(target_stream_url, headers_arg)
         if media_duration:
             print(f"⏱️ Filmin Toplam Süresi: {format_hms(media_duration)} ({media_duration:.1f}s)")
@@ -317,7 +310,7 @@ def start_m3u_stream():
                 update_local_state(current_index, 0, "", "")
                 continue
         else:
-            print(f"⚠️ Filmin toplam süresi ffprobe ile alınamadı, içerik akışı doğrudan deneniyor.")
+            print(f"⚠️ Filmin toplam süresi ffprobe ile alınamadı, normal akışa devam ediliyor.")
 
         if media_duration and last_seconds > media_duration:
             last_seconds = 0
@@ -424,7 +417,7 @@ def start_m3u_stream():
             'pipe:1'
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k içerik aktarılıyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
