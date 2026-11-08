@@ -238,7 +238,8 @@ def get_stream_duration(url, headers_arg):
         cmd = [
             'ffprobe', '-v', 'error',
             '-headers', headers_arg,
-            '-allowed_segment_extensions', 'ts,m3u,m3u8,jpg,jpeg,png,gif',
+            '-allowed_extensions', 'ALL',
+            '-allowed_segment_extensions', 'ALL',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
             url
@@ -329,7 +330,8 @@ def start_m3u_stream():
 
         input_options = [
             '-headers', headers_arg,
-            '-allowed_segment_extensions', 'ts,m3u,m3u8,jpg,jpeg,png,gif',  # <- FFmpeg 8.0+ doğru parametresi
+            '-allowed_extensions', 'ALL',
+            '-allowed_segment_extensions', 'ALL',  # <- Uzantı çelişkisini tamamen devre dışı bırakır
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-analyzeduration', '10000000',
