@@ -233,17 +233,38 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         print(f"⚠️ Step summary yazma hatası: {e}")
 
 
-def get_stream_duration(url, headers_arg):
+def prepare_hls_playlist(url, headers_dict):
+    """
+    Uzak .m3u8 veya .jpg uzantılı HLS playlist içeriğini indirip,
+    içindeki .jpg segment uzantılarını FFmpeg'in kabul edeceği formata çevirerek
+    yerel bir playlist (stream.m3u8) olarak kaydeder.
+    """
     try:
+        res = requests.get(url, headers=headers_dict, timeout=15)
+        if res.status_code == 200:
+            content = res.text
+            # Eğer içerik bir HLS playlist ise segment uzantılarını .ts yap veya bypass et
+            if "#EXTM3U" in content:
+                # Segment satırlarındaki .jpg uzantılarını .ts olarak yeniden yazıyoruz
+                # (FFmpeg içerik mpegts olduğu için .ts uzantılı segmentleri doğrudan okur)
+                modified_content = re.sub(r'(\.jpg)(\?[^\s]*)?', r'.ts\2', content, flags=re.IGNORECASE)
+                with open("stream.m3u8", "w", encoding="utf-8") as f:
+                    f.write(modified_content)
+                return "stream.m3u8"
+    except Exception as e:
+        print(f"⚠️ HLS playlist düzenleme uyarısı: {e}")
+    return url
+
+
+def get_stream_duration(url, headers_arg, headers_dict):
+    try:
+        target_input = prepare_hls_playlist(url, headers_dict)
         cmd = [
             'ffprobe', '-v', 'error',
             '-headers', headers_arg,
-            '-allowed_extensions', 'ALL',
-            '-allowed_segment_extensions', 'ALL',
-            '-f', 'hls',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            url
+            target_input
         ]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, text=True)
         if res.returncode == 0:
@@ -299,6 +320,7 @@ def start_m3u_stream():
         write_title_file(film_title)
         _live_state.update({"index": current_index, "seconds": last_seconds, "url": target_stream_url, "title": film_title})
 
+        headers_dict = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER, 'Origin': 'https://vidmody.com'}
         headers_arg = (
             f"User-Agent: {STREAM_USER_AGENT}\r\n"
             f"Referer: https://vidmody.com/\r\n"
@@ -306,7 +328,7 @@ def start_m3u_stream():
         )
 
         print(f"🔍 Kaynak video içeriği ffprobe ile doğrulanıyor...")
-        media_duration = get_stream_duration(target_stream_url, headers_arg)
+        media_duration = get_stream_duration(target_stream_url, headers_arg, headers_dict)
         if media_duration:
             print(f"⏱️ Filmin Toplam Süresi: {format_hms(media_duration)} ({media_duration:.1f}s)")
             if last_seconds >= media_duration - 15:
@@ -329,11 +351,11 @@ def start_m3u_stream():
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
+        # HLS akışını yerel düzenlenmiş dosyadan besle
+        final_input_url = prepare_hls_playlist(target_stream_url, headers_dict)
+
         input_options = [
             '-headers', headers_arg,
-            '-allowed_extensions', 'ALL',
-            '-allowed_segment_extensions', 'ALL',
-            '-f', 'hls',  # <- HLS formatını zorlayarak uzantı uyuşmazlığı kontrolünü baypas et
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-analyzeduration', '10000000',
@@ -357,7 +379,7 @@ def start_m3u_stream():
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
-            input_args = input_options + ['-re', '-i', target_stream_url]
+            input_args = input_options + ['-re', '-i', final_input_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
