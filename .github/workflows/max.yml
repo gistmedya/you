@@ -1,4 +1,4 @@
-name: fixtv
+Name: fixtv
 on:
   push:
     branches: [ main ]
@@ -22,7 +22,7 @@ jobs:
     - name: 🐍 Python kurulumu
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11' # 504 timeout riskini azaltmak için 3.11'e güncellendi
         
     - name: 📦 FFmpeg ve Kurulumlar
       run: |
