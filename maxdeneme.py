@@ -159,24 +159,31 @@ def get_m3u_playlist(m3u_url):
         headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
         response = requests.get(m3u_url, headers=headers, timeout=15)
         if response.status_code == 200:
-            lines = response.text.splitlines()
-            playlist = []
-            pending_title = None
-            for raw_line in lines:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                if line.startswith('#EXTINF'):
-                    match = re.search(r',(.+)$', line)
-                    pending_title = match.group(1).strip() if match else None
-                elif not line.startswith('#') and line.startswith('http'):
-                    title = pending_title or os.path.basename(line.split('?')[0])
-                    playlist.append({"url": line, "title": title})
-                    pending_title = None
-            return playlist
+            content = response.text.strip()
+            # UZANTI YERİNE İÇERİK KONTROLÜ (Content Sniffing)
+            if "#EXTM3U" in content or "#EXTINF" in content:
+                lines = content.splitlines()
+                playlist = []
+                pending_title = None
+                for raw_line in lines:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('#EXTINF'):
+                        match = re.search(r',(.+)$', line)
+                        pending_title = match.group(1).strip() if match else None
+                    elif not line.startswith('#') and line.startswith('http'):
+                        title = pending_title or os.path.basename(line.split('?')[0])
+                        playlist.append({"url": line, "title": title})
+                        pending_title = None
+                if playlist:
+                    return playlist
+            
+            # Playlist değilse doğrudan tekli akış olarak ele al
+            return [{"url": m3u_url, "title": os.path.basename(m3u_url.split('?')[0])}]
     except Exception as e:
-        print(f"⚠️ M3U çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
+        print(f"⚠️ İçerik analiz ve çekme hatası: {e}")
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url.split('?')[0])}]
 
 
 def download_logo():
@@ -248,7 +255,7 @@ def get_stream_duration(url, headers_arg):
 
 
 def start_m3u_stream():
-    print(f"🔧 Kullanılan M3U   : {M3U_URL}")
+    print(f"🔧 Kullanılan Kaynak: {M3U_URL}")
     print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
@@ -297,7 +304,7 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        print(f"🔍 Kaynak video süresi ffprobe ile kontrol ediliyor...")
+        print(f"🔍 Kaynak video içeriği ffprobe ile doğrulanıyor...")
         media_duration = get_stream_duration(target_stream_url, headers_arg)
         if media_duration:
             print(f"⏱️ Filmin Toplam Süresi: {format_hms(media_duration)} ({media_duration:.1f}s)")
@@ -310,13 +317,13 @@ def start_m3u_stream():
                 update_local_state(current_index, 0, "", "")
                 continue
         else:
-            print(f"⚠️ Filmin toplam süresi ffprobe ile alınamadı, normal akışa devam ediliyor.")
+            print(f"⚠️ Filmin toplam süresi ffprobe ile alınamadı, içerik akışı doğrudan deneniyor.")
 
         if media_duration and last_seconds > media_duration:
             last_seconds = 0
 
         print("=" * 60)
-        print("📺 Maxanimasyon Canlı Aktarım Yayını (4K 25fps - 2500k) Başlatılıyor")
+        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -359,8 +366,8 @@ def start_m3u_stream():
 
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=46:"
-            f"x=100:y=main_h-th-100"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=23:"
+            f"x=50:y=main_h-th-50"
         )
 
         ticker_drawtext = (
@@ -373,19 +380,19 @@ def start_m3u_stream():
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
-                '[0:v]scale=3840:2160:force_original_aspect_ratio=decrease,'
-                'pad=3840:2160:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[{logo1_input_index}:v]scale=-2:156,format=rgba,'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                f'[{logo1_input_index}:v]scale=-2:78,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-120:110[tmp1];'
+                '[main][logo1]overlay=main_w-overlay_w-60:55[tmp1];'
                 f'[tmp1]{title_drawtext}[tmp2];'
                 f'[tmp2]{ticker_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
-                '[0:v]scale=3840:2160:force_original_aspect_ratio=decrease,'
-                'pad=3840:2160:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[main]{title_drawtext}[tmp1];'
                 f'[tmp1]{ticker_drawtext}[v]'
             )
@@ -417,7 +424,7 @@ def start_m3u_stream():
             'pipe:1'
         ]
 
-        print("▶ FFmpeg başlatıldı, 4K 25fps @ 2500k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k içerik aktarılıyor...")
 
         process = subprocess.Popen(
             command,
