@@ -240,6 +240,7 @@ def get_stream_duration(url, headers_arg):
             '-headers', headers_arg,
             '-allowed_extensions', 'ALL',
             '-allowed_segment_extensions', 'ALL',
+            '-f', 'hls',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
             url
@@ -331,7 +332,8 @@ def start_m3u_stream():
         input_options = [
             '-headers', headers_arg,
             '-allowed_extensions', 'ALL',
-            '-allowed_segment_extensions', 'ALL',  # <- Uzantı çelişkisini tamamen devre dışı bırakır
+            '-allowed_segment_extensions', 'ALL',
+            '-f', 'hls',  # <- HLS formatını zorlayarak uzantı uyuşmazlığı kontrolünü baypas et
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-analyzeduration', '10000000',
