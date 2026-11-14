@@ -9,6 +9,10 @@ import re
 import json
 import requests
 import threading
+import hashlib
+import http.server
+import socketserver
+import urllib.parse
 from collections import deque
 
 # ===================== AYARLAR =====================
@@ -17,7 +21,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "Maxmedya?key=Zemmedya-3592302306"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/file_000000007be48210a068edefa7260629.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/maxtv.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -41,6 +45,236 @@ def format_hms(total_seconds):
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+
+# ===================== HLS SEGMENT PROXY =====================
+class HlsProxy:
+    """
+    HLS manifest'lerindeki 'gizlenmiş' segment uzantılarını (ör. .jpg) FFmpeg'in
+    kabul edeceği tiplere dönüştürmek için yerel bir HTTP proxy.
+    - Segmentler upstream'den aynen çekilir.
+    - İçerik tipi (Content-Type) FFmpeg'in beklediği gibi döndürülür.
+    - User-Agent / Referer / Origin upstream isteğe eklenir.
+    """
+
+    def __init__(self, host="127.0.0.1", port=0):
+        self.host = host
+        self.port = port
+        self.server = None
+        self.thread = None
+        self.upstream_headers = {}
+        self.segment_cache = {}  # token -> (upstream_url, served_ext)
+        self.lock = threading.Lock()
+
+    def start(self):
+        proxy = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, fmt, *args):
+                pass  # sessiz
+
+            def do_GET(self):
+                try:
+                    proxy._handle(self)
+                except Exception:
+                    try:
+                        self.send_response(500)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                    except Exception:
+                        pass
+
+        class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+        self.server = ThreadedServer((self.host, self.port), Handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        print(f"🌐 HLS proxy çalışıyor => http://{self.host}:{self.port}")
+        return self
+
+    def base_url(self):
+        return f"http://{self.host}:{self.port}"
+
+    def register_segment(self, upstream_url):
+        """Segment URL'sini kaydeder, FFmpeg'e verilecek benzersiz yerel yolu döndürür."""
+        path = urllib.parse.urlparse(upstream_url).path
+        ext = os.path.splitext(path)[1].lower().lstrip(".") or "ts"
+        # FFmpeg'in kabul ettiği uzantılar
+        allowed = {"ts", "m4s", "mp4", "aac", "m4a", "m4v", "mp3", "ac3", "eac3", "vtt", "webvtt"}
+        served_ext = ext if ext in allowed else "ts"
+
+        token = hashlib.sha1(upstream_url.encode("utf-8")).hexdigest()[:16]
+        with self.lock:
+            self.segment_cache[token] = (upstream_url, served_ext)
+        return f"{self.base_url()}/seg/{token}.{served_ext}"
+
+    def _handle(self, handler):
+        parsed = urllib.parse.urlparse(handler.path)
+        path = parsed.path
+
+        if path.startswith("/seg/"):
+            token = path[len("/seg/"):].split(".")[0]
+            with self.lock:
+                entry = self.segment_cache.get(token)
+            if not entry:
+                handler.send_response(404)
+                handler.send_header("Content-Length", "0")
+                handler.end_headers()
+                return
+
+            upstream_url, served_ext = entry
+            ctype = "video/mp2t"
+            if served_ext in ("m4s", "mp4", "m4v"):
+                ctype = "video/iso.segment"
+            elif served_ext in ("aac", "m4a", "mp3", "ac3", "eac3"):
+                ctype = "audio/mp4"
+            elif served_ext in ("vtt", "webvtt"):
+                ctype = "text/vtt"
+
+            try:
+                r = requests.get(
+                    upstream_url,
+                    headers=self.upstream_headers,
+                    stream=True,
+                    timeout=30,
+                )
+            except Exception:
+                handler.send_response(502)
+                handler.send_header("Content-Length", "0")
+                handler.end_headers()
+                return
+
+            handler.send_response(r.status_code)
+            handler.send_header("Content-Type", ctype)
+            length = r.headers.get("Content-Length")
+            if length:
+                handler.send_header("Content-Length", length)
+            else:
+                handler.send_header("Transfer-Encoding", "chunked")
+            handler.end_headers()
+
+            try:
+                for chunk in r.iter_content(64 * 1024):
+                    if chunk:
+                        handler.wfile.write(chunk)
+            except Exception:
+                pass
+            return
+
+        # /key veya /manifest gibi diğer istekler buraya düşerse 404
+        handler.send_response(404)
+        handler.send_header("Content-Length", "0")
+        handler.end_headers()
+
+
+hls_proxy = HlsProxy()
+_hls_proxy_started = False
+
+
+def _ensure_proxy_started():
+    global _hls_proxy_started
+    if not _hls_proxy_started:
+        hls_proxy.start()
+        _hls_proxy_started = True
+
+
+def _rewrite_m3u8(base_url, manifest_text):
+    """
+    Manifest içindeki tüm segment / key / init URL'lerini proxy'ye yönlendirir.
+    #EXT-X-KEY gibi URI="..." alanları da proxy üzerinden sunulur.
+    """
+    lines = manifest_text.splitlines()
+    out_lines = []
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            out_lines.append(raw)
+            continue
+
+        if line.startswith("#"):
+            # URI="..." içeren tag'leri (EXT-X-KEY, EXT-X-MAP, EXT-X-MEDIA vs) yeniden yaz
+            def repl(match):
+                uri = match.group(1)
+                absolute = urllib.parse.urljoin(base_url, uri)
+                return f'URI="{absolute}"'
+            new_line = re.sub(r'URI="([^"]+)"', repl, line)
+            out_lines.append(new_line)
+            continue
+
+        # Segment satırı
+        absolute = urllib.parse.urljoin(base_url, line)
+        local = hls_proxy.register_segment(absolute)
+        out_lines.append(local)
+
+    return "\n".join(out_lines) + "\n"
+
+
+def resolve_stream_url(url):
+    """
+    Eğer URL bir HLS manifest ise (.m3u8), indirip segment URL'lerini
+    yerel proxy'ye yönlendirir ve yerel manifest dosyasının yolunu döndürür.
+    Değilse orijinal URL'yi döndürür (mevcut davranış).
+    """
+    if ".m3u8" not in url.lower():
+        return url
+
+    _ensure_proxy_started()
+    hls_proxy.upstream_headers = {
+        "User-Agent": STREAM_USER_AGENT,
+        "Referer": STREAM_REFERER,
+        "Origin": "https://vidmody.com",
+    }
+
+    try:
+        r = requests.get(url, headers=hls_proxy.upstream_headers, timeout=20)
+        if r.status_code != 200 or "#EXTM3U" not in r.text:
+            print(f"⚠️ Manifest alınamadı (status={r.status_code}), orijinal URL kullanılacak.")
+            return url
+
+        manifest_text = r.text
+        base_url = url
+
+        # Master playlist ise ilk variant'ı seç
+        if "#EXT-X-STREAM-INF" in manifest_text:
+            variant = None
+            lines = manifest_text.splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith("#EXT-X-STREAM-INF"):
+                    for j in range(i + 1, len(lines)):
+                        nxt = lines[j].strip()
+                        if nxt and not nxt.startswith("#"):
+                            variant = urllib.parse.urljoin(base_url, nxt)
+                            break
+                    if variant:
+                        break
+            if not variant:
+                print("⚠️ Master manifest'te variant bulunamadı, orijinal URL kullanılacak.")
+                return url
+            print(f"🔀 Master manifest algılandı, variant seçildi: {variant}")
+            r2 = requests.get(variant, headers=hls_proxy.upstream_headers, timeout=20)
+            if r2.status_code != 200:
+                print(f"⚠️ Variant manifest alınamadı (status={r2.status_code}).")
+                return url
+            manifest_text = r2.text
+            base_url = variant
+
+        rewritten = _rewrite_m3u8(base_url, manifest_text)
+
+        manifest_path = os.path.abspath("proxied_manifest.m3u8")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(rewritten)
+
+        print(f"🔧 Manifest proxy'ye yönlendirildi => {manifest_path}")
+        return manifest_path
+    except Exception as e:
+        print(f"⚠️ Manifest rewrite hatası: {e}, orijinal URL kullanılacak.")
+        return url
 
 
 # ===================== KALICI RTMP YAYINCISI =====================
@@ -297,18 +531,22 @@ def start_m3u_stream():
             video_url = video_url.strip()
             audio_url = audio_url.strip()
 
+            ffmpeg_video_url = resolve_stream_url(video_url)
+            ffmpeg_audio_url = resolve_stream_url(audio_url)
+
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
             input_args = (
-                input_options + ss_arg + ['-re', '-i', video_url] +
-                input_options + ss_arg + ['-re', '-i', audio_url]
+                input_options + ss_arg + ['-re', '-i', ffmpeg_video_url] +
+                input_options + ss_arg + ['-re', '-i', ffmpeg_audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            input_args = input_options + ss_arg + ['-re', '-i', target_stream_url]
+            ffmpeg_input_url = resolve_stream_url(target_stream_url)
+            input_args = input_options + ss_arg + ['-re', '-i', ffmpeg_input_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
