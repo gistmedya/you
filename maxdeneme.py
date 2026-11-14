@@ -21,7 +21,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "Maxmedya?key=Zemmedya-3592302306"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/maxtv.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/file_000000007be48210a068edefa7260629.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -52,9 +52,6 @@ class HlsProxy:
     """
     HLS manifest'lerindeki 'gizlenmiş' segment uzantılarını (ör. .jpg) FFmpeg'in
     kabul edeceği tiplere dönüştürmek için yerel bir HTTP proxy.
-    - Segmentler upstream'den aynen çekilir.
-    - İçerik tipi (Content-Type) FFmpeg'in beklediği gibi döndürülür.
-    - User-Agent / Referer / Origin upstream isteğe eklenir.
     """
 
     def __init__(self, host="127.0.0.1", port=0):
@@ -63,7 +60,7 @@ class HlsProxy:
         self.server = None
         self.thread = None
         self.upstream_headers = {}
-        self.segment_cache = {}  # token -> (upstream_url, served_ext)
+        self.segment_cache = {}
         self.lock = threading.Lock()
 
     def start(self):
@@ -73,7 +70,7 @@ class HlsProxy:
             protocol_version = "HTTP/1.1"
 
             def log_message(self, fmt, *args):
-                pass  # sessiz
+                pass
 
             def do_GET(self):
                 try:
@@ -101,10 +98,8 @@ class HlsProxy:
         return f"http://{self.host}:{self.port}"
 
     def register_segment(self, upstream_url):
-        """Segment URL'sini kaydeder, FFmpeg'e verilecek benzersiz yerel yolu döndürür."""
         path = urllib.parse.urlparse(upstream_url).path
         ext = os.path.splitext(path)[1].lower().lstrip(".") or "ts"
-        # FFmpeg'in kabul ettiği uzantılar
         allowed = {"ts", "m4s", "mp4", "aac", "m4a", "m4v", "mp3", "ac3", "eac3", "vtt", "webvtt"}
         served_ext = ext if ext in allowed else "ts"
 
@@ -166,7 +161,6 @@ class HlsProxy:
                 pass
             return
 
-        # /key veya /manifest gibi diğer istekler buraya düşerse 404
         handler.send_response(404)
         handler.send_header("Content-Length", "0")
         handler.end_headers()
@@ -186,7 +180,6 @@ def _ensure_proxy_started():
 def _rewrite_m3u8(base_url, manifest_text):
     """
     Manifest içindeki tüm segment / key / init URL'lerini proxy'ye yönlendirir.
-    #EXT-X-KEY gibi URI="..." alanları da proxy üzerinden sunulur.
     """
     lines = manifest_text.splitlines()
     out_lines = []
@@ -198,7 +191,6 @@ def _rewrite_m3u8(base_url, manifest_text):
             continue
 
         if line.startswith("#"):
-            # URI="..." içeren tag'leri (EXT-X-KEY, EXT-X-MAP, EXT-X-MEDIA vs) yeniden yaz
             def repl(match):
                 uri = match.group(1)
                 absolute = urllib.parse.urljoin(base_url, uri)
@@ -207,7 +199,6 @@ def _rewrite_m3u8(base_url, manifest_text):
             out_lines.append(new_line)
             continue
 
-        # Segment satırı
         absolute = urllib.parse.urljoin(base_url, line)
         local = hls_proxy.register_segment(absolute)
         out_lines.append(local)
@@ -217,13 +208,10 @@ def _rewrite_m3u8(base_url, manifest_text):
 
 def resolve_stream_url(url):
     """
-    Eğer URL bir HLS manifest ise (.m3u8), indirip segment URL'lerini
-    yerel proxy'ye yönlendirir ve yerel manifest dosyasının yolunu döndürür.
-    Değilse orijinal URL'yi döndürür (mevcut davranış).
+    Uzantısız da olsa içeriği HLS manifest ise (#EXTM3U içeriyorsa),
+    segment URL'lerini yerel proxy'ye yönlendirir ve yerel manifest yolunu döndürür.
+    Değilse orijinal URL'yi döndürür.
     """
-    if ".m3u8" not in url.lower():
-        return url
-
     _ensure_proxy_started()
     hls_proxy.upstream_headers = {
         "User-Agent": STREAM_USER_AGENT,
@@ -233,12 +221,19 @@ def resolve_stream_url(url):
 
     try:
         r = requests.get(url, headers=hls_proxy.upstream_headers, timeout=20)
-        if r.status_code != 200 or "#EXTM3U" not in r.text:
-            print(f"⚠️ Manifest alınamadı (status={r.status_code}), orijinal URL kullanılacak.")
+        if r.status_code != 200:
+            print(f"⚠️ Kaynak indirilemedi (status={r.status_code}), orijinal URL kullanılacak.")
+            return url
+
+        # İçerik HLS manifest mi? (uzantıdan bağımsız)
+        if "#EXTM3U" not in r.text:
+            ctype = r.headers.get('Content-Type', '?')
+            print(f"ℹ️ Kaynak HLS manifest değil (Content-Type: {ctype}), orijinal URL kullanılacak.")
             return url
 
         manifest_text = r.text
         base_url = url
+        print(f"✅ HLS manifest algılandı: {url[:100]}")
 
         # Master playlist ise ilk variant'ı seç
         if "#EXT-X-STREAM-INF" in manifest_text:
@@ -256,9 +251,9 @@ def resolve_stream_url(url):
             if not variant:
                 print("⚠️ Master manifest'te variant bulunamadı, orijinal URL kullanılacak.")
                 return url
-            print(f"🔀 Master manifest algılandı, variant seçildi: {variant}")
+            print(f"🔀 Master manifest algılandı, variant seçildi: {variant[:100]}")
             r2 = requests.get(variant, headers=hls_proxy.upstream_headers, timeout=20)
-            if r2.status_code != 200:
+            if r2.status_code != 200 or "#EXTM3U" not in r2.text:
                 print(f"⚠️ Variant manifest alınamadı (status={r2.status_code}).")
                 return url
             manifest_text = r2.text
@@ -270,7 +265,13 @@ def resolve_stream_url(url):
         with open(manifest_path, "w", encoding="utf-8") as f:
             f.write(rewritten)
 
+        # Debug: ilk birkaç satırı logla
+        debug_lines = rewritten.splitlines()
         print(f"🔧 Manifest proxy'ye yönlendirildi => {manifest_path}")
+        print("   📄 Manifest ilk satırlar:")
+        for dl in debug_lines[:8]:
+            print(f"      {dl[:140]}")
+
         return manifest_path
     except Exception as e:
         print(f"⚠️ Manifest rewrite hatası: {e}, orijinal URL kullanılacak.")
@@ -279,12 +280,6 @@ def resolve_stream_url(url):
 
 # ===================== KALICI RTMP YAYINCISI =====================
 class RtmpPublisher:
-    """
-    RTMP sunucusuna SÜREKLİ bağlı kalan tek bir FFmpeg süreci.
-    Filmleri kodlayan FFmpeg süreçleri çıktılarını (MPEG-TS) bu sürecin stdin'ine yazar.
-    Film değişince sadece kodlayıcı süreç yenilenir; RTMP bağlantısı hiç kapanmaz.
-    """
-
     def __init__(self):
         self.proc = None
         self.started_at = 0.0
@@ -328,7 +323,6 @@ class RtmpPublisher:
             pass
 
     def clock(self):
-        """Yayıncı başladığından beri geçen gerçek süre (zaman damgası sürekliliği için)."""
         return time.time() - self.started_at
 
     def stop(self):
@@ -351,7 +345,6 @@ publisher = RtmpPublisher()
 
 
 def get_local_state():
-    """Yerel state dosyasından son durumu okur (indeks, saniye, o an oynayan linkin URL'si)."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
             print(f"⚠️ Yerel state dosyası boş ({STATE_FILE_NAME}), 0'dan başlanıyor.")
@@ -372,7 +365,6 @@ def get_local_state():
 
 
 def update_local_state(index, seconds, url=""):
-    """Son konumu (indeks, saniye) ve o an oynayan linkin URL'sini yerel state dosyasına kaydeder."""
     try:
         data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
@@ -423,7 +415,6 @@ def download_logo():
 
 
 def write_title_file(title):
-    """Şu an oynayan içeriğin adını, drawtext filtresinin okuyacağı dosyaya yazar."""
     try:
         with open('title.txt', 'w', encoding='utf-8') as f:
             f.write(title)
@@ -557,14 +548,12 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Film başlığı yazısı (Kayan yazının üstünde hizalandı)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
             f"x=80:y=main_h-th-80"
         )
 
-        # Kayan yazı ve siyah arka plan bandı
         ticker_drawtext = (
             f"drawtext=text='{TICKER_TEXT}':fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white:fontsize=0:"
@@ -592,11 +581,8 @@ def start_m3u_stream():
                 f'[tmp1]{ticker_drawtext}[v]'
             )
 
-        # Kalıcı yayıncı ölmüşse (gerçek bir kopma) yeniden başlat
         publisher.ensure_running()
 
-        # Zaman damgaları filmler arasında kesintisiz ilerlesin diye
-        # yayıncının başlangıcından beri geçen gerçek süre kadar kaydırılır.
         ts_offset = publisher.clock() + 1.0
 
         command = [
@@ -627,7 +613,7 @@ def start_m3u_stream():
 
         process = subprocess.Popen(
             command,
-            stdout=publisher.proc.stdin,   # Çıktı kalıcı yayıncıya akar; bu süreç bitince boru kapanmaz
+            stdout=publisher.proc.stdin,
             stderr=subprocess.PIPE,
             universal_newlines=True
         )
