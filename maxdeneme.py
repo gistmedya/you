@@ -20,12 +20,8 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/maxtv.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
-
-# FFmpeg ve FFprobe yolları (GitHub Actions ortamında PATH üzerinden doğrudan çalışır)
-FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
-FFPROBE_BIN = os.getenv("FFPROBE_BIN", "ffprobe")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
@@ -64,7 +60,7 @@ class RtmpPublisher:
             return
         self.stop()
         cmd = [
-            FFMPEG_BIN, '-hide_banner', '-loglevel', 'warning',
+            'ffmpeg', '-hide_banner', '-loglevel', 'warning',
             '-fflags', '+genpts',
             '-analyzeduration', '3000000',
             '-probesize', '3000000',
@@ -75,7 +71,7 @@ class RtmpPublisher:
             '-f', 'flv',
             RTMP_SERVER
         ]
-        print(f"📡 Kalıcı RTMP yayıncısı başlatılıyor ({FFMPEG_BIN}) => {RTMP_SERVER}")
+        print(f"📡 Kalıcı RTMP yayıncısı başlatılıyor => {RTMP_SERVER}")
         self.proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
@@ -235,7 +231,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 def get_stream_duration(url, headers_arg):
     try:
         cmd = [
-            FFPROBE_BIN, '-v', 'error',
+            'ffprobe', '-v', 'error',
             '-headers', headers_arg,
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -256,7 +252,6 @@ def start_m3u_stream():
     print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
-    print(f"🔧 FFmpeg Binary    : {FFMPEG_BIN}")
 
     download_logo()
     current_index, last_seconds, last_url, last_title = get_local_state()
@@ -265,6 +260,9 @@ def start_m3u_stream():
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
 
+    # Bu sözlük, hangi URL'nin -ss parametresini desteklemediğini hafızada tutar.
+    # Böylece aynı film tekrar koptuğunda veya yeniden başladığında baştan -ss denemek yerine
+    # direkt 0 saniye ile (ama state'i bozmadan) hatasız başlatır.
     no_ss_urls = set()
 
     while True:
@@ -326,6 +324,8 @@ def start_m3u_stream():
         print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         
+        # Eğer bu URL daha önce -ss yüzünden patladıysa, seek yapmıyoruz ama 
+        # state'deki saniyeyi (last_seconds) koruyarak yayını başlatıyoruz!
         if target_stream_url in no_ss_urls:
             print("💡 Dikkat: Bu kaynak -ss desteklemiyor. Seek atlanıyor, ancak kaldığı yer korunuyor.")
             ss_arg = []
@@ -410,7 +410,7 @@ def start_m3u_stream():
         ts_offset = publisher.clock() + 1.0
 
         command = [
-            FFMPEG_BIN
+            'ffmpeg'
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
@@ -433,7 +433,7 @@ def start_m3u_stream():
             'pipe:1'
         ]
 
-        print(f"▶ FFmpeg ({FFMPEG_BIN}) başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
@@ -498,6 +498,10 @@ def start_m3u_stream():
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             
+            # Eğer ilk denemede boş çıktı aldıysak (played_seconds == 0), 
+            # bu linkin -ss desteklemediğini kaydediyoruz (no_ss_urls listesine ekliyoruz).
+            # Böylece state'deki saniyeyi (last_seconds) sıfırlamadan, olduğu gibi koruyarak 
+            # bir sonraki turda seek yapmadan (0'dan akıtarak ama state'i bozmadan) devam ediyoruz.
             if played_seconds == 0 and last_seconds > 0:
                 print(f"⚠️ -ss parametresi bu linkte boş çıktı üretti. Bu URL için seek kalıcı olarak devre dışı bırakılıyor.")
                 no_ss_urls.add(target_stream_url)
@@ -532,3 +536,4 @@ if __name__ == "__main__":
         print("\n🛑 Durduruluyor...")
     finally:
         publisher.stop()
+        
