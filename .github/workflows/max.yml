@@ -1,4 +1,5 @@
 name: fixtv
+
 on:
   push:
     branches: [ main ]
@@ -22,13 +23,25 @@ jobs:
     - name: 🐍 Python kurulumu
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # 504 timeout riskini azaltmak için 3.11'e güncellendi
+        python-version: '3.11'
         
-    - name: 📦 FFmpeg ve Kurulumlar
+    # --- FFPEG'İ KURAN ÖZEL ADIM ---
+    - name: 📦 FFmpeg Kurulumu
+      uses: FedericoCarboni/setup-ffmpeg@v3
+      with:
+        ffmpeg-version: "release"
+        architecture: x64
+
+    - name: 🛠️ Diğer Bağımlılıklar (OpenSSL / Ca-certificates & Pip)
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
+        sudo apt-get install -y --no-install-recommends ca-certificates openssl
         pip install requests
+
+    - name: 🔍 FFmpeg Sürümünü Kontrol Et
+      run: |
+        ffmpeg -version
+        ffprobe -version
 
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
