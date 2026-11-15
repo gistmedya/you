@@ -6,7 +6,7 @@ on:
 
 # Çift yayın çalışmasını ve çakışmayı önleyen kural
 concurrency:
-  group: fix-stream
+  group: fixtv-stream
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     - name: 🐍 Python kurulumu
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11' # 504 timeout riskini azaltmak için 3.11'e güncellendi
+        python-version: '3.10'
         
     - name: 📦 FFmpeg ve Kurulumlar
       run: |
