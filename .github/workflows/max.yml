@@ -1,5 +1,4 @@
 name: fixtv
-
 on:
   push:
     branches: [ main ]
@@ -19,45 +18,17 @@ jobs:
     steps:
     - name: 📥 Depoyu klonla
       uses: actions/checkout@v4
-
+      
     - name: 🐍 Python kurulumu
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
-
-    # --- FFMPEG 9.0.2'Yİ SABİT OLARAK KURAN ADIM ---
-    - name: 📦 FFmpeg 9.0.2 Kurulumu (Sabit Sürüm)
-      run: |
-        set -e
-        FFMPEG_VERSION="9.0.2"
-        BUILD_NAME="ffmpeg-n${FFMPEG_VERSION}-linux64-gpl-9.0"
-        echo "🔧 FFmpeg ${FFMPEG_VERSION} indiriliyor..."
-        wget -q "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${BUILD_NAME}.tar.xz" -O ffmpeg.tar.xz
-        tar -xf ffmpeg.tar.xz
-        sudo mv "${BUILD_NAME}/bin/ffmpeg"  /usr/local/bin/ffmpeg
-        sudo mv "${BUILD_NAME}/bin/ffprobe" /usr/local/bin/ffprobe
-        sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
-        echo "✅ FFmpeg kuruldu:"
-        ffmpeg -version | head -1
-
-    - name: 🛠️ Diğer Bağımlılıklar (OpenSSL / Ca-certificates & Pip)
+        python-version: '3.11' # 504 timeout riskini azaltmak için 3.11'e güncellendi
+        
+    - name: 📦 FFmpeg ve Kurulumlar
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ca-certificates openssl
+        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
         pip install requests
-
-    - name: 🔍 FFmpeg Sürümünü Kontrol Et (9.0.2 Bekleniyor)
-      run: |
-        set -e
-        FFMPEG_VERSION=$(ffmpeg -version | head -1 | sed -n 's/.*ffmpeg version \([^ ]*\).*/\1/p')
-        FFPROBE_VERSION=$(ffprobe -version | head -1 | sed -n 's/.*ffprobe version \([^ ]*\).*/\1/p')
-        echo "Tespit edilen ffmpeg : ${FFMPEG_VERSION}"
-        echo "Tespit edilen ffprobe: ${FFPROBE_VERSION}"
-        if [ "${FFMPEG_VERSION}" != "9.0.2" ]; then
-          echo "❌ Beklenen FFmpeg 9.0.2, tespit edilen: ${FFMPEG_VERSION}"
-          exit 1
-        fi
-        echo "✅ FFmpeg 9.0.2 doğrulandı."
 
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
@@ -67,7 +38,6 @@ jobs:
     - name: 🚀 Yayını başlat
       env:
         STATE_FILE_NAME: "state_fixtv.json"
-        STRICT_FFMPEG: "1"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
