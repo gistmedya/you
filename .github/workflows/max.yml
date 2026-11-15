@@ -6,7 +6,7 @@ on:
 
 # Çift yayın çalışmasını ve çakışmayı önleyen kural
 concurrency:
-  group: fixtv-stream
+  group: fix-stream
   cancel-in-progress: true
 
 jobs:
@@ -33,18 +33,18 @@ jobs:
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fix.json -o state_fix.json
 
     - name: 🚀 Yayını başlat
       env:
-        STATE_FILE_NAME: "state_fixtv.json"
+        STATE_FILE_NAME: "state_fix.json"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
       if: always()
       uses: softprops/action-gh-release@v1
       with:
-        files: state_fixtv.json
+        files: state_fix.json
         tag_name: state-data
         name: "Yayın Kaldığı Yer (State)"
         draft: false
