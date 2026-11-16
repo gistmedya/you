@@ -1,12 +1,13 @@
-name: fixtv
+name: maxtv
+
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
-# Çift yayın çalışmasını ve çakışmayı önleyen kural
+# Çift yayın çalışmasını engeller: Yeni push geldiğinde eski çalışan yayını otomatik durdurur.
 concurrency:
-  group: fixtv-stream
+  group: maxpremier-stream
   cancel-in-progress: true
 
 jobs:
@@ -52,13 +53,15 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 🔁 Süre Doldu veya İptal Edildi, Yeni Run'ı Tetikle
-      if: always()
+    - name: 🔁 Otomatik Yeniden Tetikle (Elle İptal veya Süre Dolması)
+      # Kod Push yapıldığında eski yayın iptal edilince 2. yayın tetiklenmez.
+      # Ancak panellerden elle Cancel yaptığınızda otomatik yeni yayın başlar!
+      if: always() && !(github.event_name == 'push' && cancelled())
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
         curl -X POST \
           -H "Authorization: token $GH_TOKEN" \
           -H "Accept: application/vnd.github+json" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/maxdeneme.yml/dispatches" \
-          -d '{"ref":"main"}'
+          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/maxpremier.yml/dispatches" \
+          -d '{"ref":"${{ github.ref_name }}"}'
