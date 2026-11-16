@@ -13,12 +13,12 @@ import signal
 from collections import deque
 
 # ===================== AYARLAR =====================
-RTMP_URL = "rtmp://rtmp.zemmedya.com/zem"
-STREAM_KEY = os.getenv("STREAM_KEY") or "Neo?key=Zemmedya-7426239946"
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
+STREAM_KEY = os.getenv("STREAM_KEY") or "maxyerli"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/deneme.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gistmedya/0101/refs/heads/main/maxtv.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/gismedya/0101/refs/heads/main/maxtv.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fix.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -260,6 +260,11 @@ def start_m3u_stream():
     FAST_FAIL_THRESHOLD_SECONDS = 20
     MAX_RETRY_DELAY_SECONDS = 120
 
+    # Bu sözlük, hangi URL'nin -ss parametresini desteklemediğini hafızada tutar.
+    # Böylece aynı film tekrar koptuğunda veya yeniden başladığında baştan -ss denemek yerine
+    # direkt 0 saniye ile (ama state'i bozmadan) hatasız başlatır.
+    no_ss_urls = set()
+
     while True:
         playlist = get_m3u_playlist(M3U_URL)
         if not playlist:
@@ -318,7 +323,18 @@ def start_m3u_stream():
         print("=" * 60)
         print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
-        print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
+        
+        # Eğer bu URL daha önce -ss yüzünden patladıysa, seek yapmıyoruz ama 
+        # state'deki saniyeyi (last_seconds) koruyarak yayını başlatıyoruz!
+        if target_stream_url in no_ss_urls:
+            print("💡 Dikkat: Bu kaynak -ss desteklemiyor. Seek atlanıyor, ancak kaldığı yer korunuyor.")
+            ss_arg = []
+            actual_start_seconds = last_seconds
+        else:
+            ss_arg = ['-ss', str(last_seconds)] if last_seconds > 0 else []
+            actual_start_seconds = last_seconds
+
+        print(f"⏱️ Başlangıç Saniyesi: {actual_start_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         input_options = [
@@ -340,27 +356,27 @@ def start_m3u_stream():
             audio_url = audio_url.strip()
 
             input_args = (
-                input_options + ['-re', '-i', video_url] +
-                input_options + ['-re', '-i', audio_url]
+                input_options + ss_arg + ['-re', '-i', video_url] +
+                input_options + ss_arg + ['-re', '-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
-            input_args = input_options + ['-re', '-i', target_stream_url]
+            input_args = input_options + ss_arg + ['-re', '-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
         print("=" * 60)
 
-        print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
-        write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
+        print_dashboard(film_title, current_index, len(playlist), actual_start_seconds, status="🟡 Başlatılıyor")
+        write_step_summary(film_title, current_index, len(playlist), actual_start_seconds, status="🟡 Başlatılıyor")
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=24:"
-            f"x=58:y=main_h-th-58"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=23:"
+            f"x=50:y=main_h-th-50"
         )
 
         ticker_drawtext = (
@@ -427,10 +443,9 @@ def start_m3u_stream():
         )
         _live_state["proc"] = process
 
-        base_seconds = last_seconds
         last_save_time = time.time()
         last_dashboard_time = time.time()
-        current_stream_seconds = base_seconds
+        current_stream_seconds = actual_start_seconds
         stderr_tail = deque(maxlen=40)
         played_seconds = 0.0
 
@@ -447,7 +462,7 @@ def start_m3u_stream():
                 if time_match:
                     hrs, mins, secs = time_match.groups()
                     played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
-                    current_stream_seconds = base_seconds + played_seconds
+                    current_stream_seconds = actual_start_seconds + played_seconds
                     _live_state["seconds"] = current_stream_seconds
 
                     now = time.time()
@@ -483,8 +498,17 @@ def start_m3u_stream():
 
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             
-            last_seconds = current_stream_seconds
-            duration_this_attempt = current_stream_seconds - base_seconds
+            # Eğer ilk denemede boş çıktı aldıysak (played_seconds == 0), 
+            # bu linkin -ss desteklemediğini kaydediyoruz (no_ss_urls listesine ekliyoruz).
+            # Böylece state'deki saniyeyi (last_seconds) sıfırlamadan, olduğu gibi koruyarak 
+            # bir sonraki turda seek yapmadan (0'dan akıtarak ama state'i bozmadan) devam ediyoruz.
+            if played_seconds == 0 and last_seconds > 0:
+                print(f"⚠️ -ss parametresi bu linkte boş çıktı üretti. Bu URL için seek kalıcı olarak devre dışı bırakılıyor.")
+                no_ss_urls.add(target_stream_url)
+            else:
+                last_seconds = current_stream_seconds
+
+            duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
